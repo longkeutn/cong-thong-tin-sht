@@ -1,0 +1,5 @@
+{
+  "name": "Enterprise App Portal",
+  "description": "A centralized ERP-style dashboard for internal tools, featuring role-based access, favorites, and category management.",
+  "requestFramePermissions": []
+}
