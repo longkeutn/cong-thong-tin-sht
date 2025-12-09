@@ -2,47 +2,85 @@ import React, { useState, useMemo, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import AppCard from './components/AppCard';
 import SettingsModal from './components/SettingsModal';
-import { CATEGORIES, APPS, MOCK_FAVORITES, CURRENT_USER } from './constants';
-import { AppItem, Category } from './types';
+import { getPortalData, saveFavorite } from './services/api'; // Import API service
+import { AppItem, Category, User } from './types';
 import { Search, Bell, Settings, Menu, ChevronRight } from 'lucide-react';
+
+// Default empty state
+const INITIAL_USER: User = {
+  email: '',
+  fullName: 'Loading...',
+  role: 'All',
+  avatarUrl: ''
+};
 
 const App: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [favorites, setFavorites] = useState<string[]>(MOCK_FAVORITES);
+  
+  // State for data
+  const [currentUser, setCurrentUser] = useState<User>(INITIAL_USER);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [apps, setApps] = useState<AppItem[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
-  // Loading simulation
   const [isLoading, setIsLoading] = useState(true);
 
+  // Fetch Data on Mount
   useEffect(() => {
-    // Simulate initial data fetch
-    const timer = setTimeout(() => setIsLoading(false), 800);
-    return () => clearTimeout(timer);
+    const fetchData = async () => {
+      try {
+        setIsLoading(true);
+        const data = await getPortalData();
+        setCurrentUser(data.user);
+        setCategories(data.categories);
+        setApps(data.apps);
+        setFavorites(data.favorites);
+      } catch (error) {
+        console.error("Failed to fetch portal data:", error);
+        alert("Failed to load data. Please refresh.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
   }, []);
 
-  const toggleFavorite = (appId: string) => {
+  const handleToggleFavorite = async (appId: string) => {
+    // Optimistic UI Update
     setFavorites(prev => 
       prev.includes(appId) ? prev.filter(id => id !== appId) : [...prev, appId]
     );
+
+    // Call Backend
+    try {
+      const updatedList = await saveFavorite(appId);
+      // If backend returns a list (GAS), sync it. If empty (Dev), ignore.
+      if (updatedList && updatedList.length > 0) {
+        setFavorites(updatedList);
+      }
+    } catch (e) {
+      console.error("Error saving favorite", e);
+      // Revert on failure (optional, simplified here)
+    }
   };
 
   // Filter Apps Logic
   const filteredApps = useMemo(() => {
-    let result = APPS;
+    let result = apps;
 
-    // 1. Role Filter (Simulated based on Current User)
-    result = result.filter(app => 
-      app.allowedRoles.includes('All') || app.allowedRoles.includes(CURRENT_USER.role)
-    );
+    // Note: Role filtering is already done by the backend/mock API.
+    // We only filter by Category and Search here.
 
-    // 2. Category Filter
+    // 1. Category Filter
     if (selectedCategory) {
       result = result.filter(app => app.categoryId === selectedCategory);
     }
 
-    // 3. Search Filter
+    // 2. Search Filter
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(app => 
@@ -52,7 +90,7 @@ const App: React.FC = () => {
     }
 
     return result;
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory, searchQuery, apps]);
 
   // Group apps by category for the main dashboard view
   const groupedApps = useMemo(() => {
@@ -60,7 +98,7 @@ const App: React.FC = () => {
     
     const groups: { category: Category, apps: AppItem[] }[] = [];
     
-    CATEGORIES.forEach(cat => {
+    categories.forEach(cat => {
       const catApps = filteredApps.filter(app => app.categoryId === cat.id);
       if (catApps.length > 0) {
         groups.push({ category: cat, apps: catApps });
@@ -68,13 +106,13 @@ const App: React.FC = () => {
     });
     
     return groups;
-  }, [filteredApps, selectedCategory]);
+  }, [filteredApps, selectedCategory, categories]);
 
-  const favoriteApps = APPS.filter(app => favorites.includes(app.id));
+  const favoriteApps = apps.filter(app => favorites.includes(app.id));
 
   // Determine current category name for breadcrumb
   const currentCategoryName = selectedCategory 
-    ? CATEGORIES.find(c => c.id === selectedCategory)?.name 
+    ? categories.find(c => c.id === selectedCategory)?.name 
     : 'Dashboard';
 
   return (
@@ -82,7 +120,7 @@ const App: React.FC = () => {
       
       {/* Sidebar */}
       <Sidebar 
-        categories={CATEGORIES} 
+        categories={categories} 
         selectedCategory={selectedCategory} 
         onSelectCategory={setSelectedCategory}
         isOpen={isSidebarOpen}
@@ -104,7 +142,7 @@ const App: React.FC = () => {
              
              {/* Breadcrumb */}
              <div className="hidden sm:flex items-center text-sm text-gray-500">
-                <span className="cursor-pointer hover:text-primary">Home</span>
+                <span className="cursor-pointer hover:text-primary" onClick={() => setSelectedCategory(null)}>Home</span>
                 <ChevronRight size={14} className="mx-2" />
                 <span className="font-semibold text-gray-800">{currentCategoryName}</span>
              </div>
@@ -135,14 +173,27 @@ const App: React.FC = () => {
                <Settings size={20} />
              </button>
              <div className="h-8 w-[1px] bg-gray-200 mx-2"></div>
-             <div className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded-lg transition-colors">
-               <img 
-                 src={CURRENT_USER.avatarUrl} 
-                 alt="User" 
-                 className="w-8 h-8 rounded-full border border-gray-200"
-               />
-               <span className="text-sm font-medium text-gray-700 hidden lg:block">{CURRENT_USER.fullName}</span>
-             </div>
+             {currentUser.email ? (
+               <div className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded-lg transition-colors">
+                 {currentUser.avatarUrl ? (
+                    <img 
+                      src={currentUser.avatarUrl} 
+                      alt="User" 
+                      className="w-8 h-8 rounded-full border border-gray-200"
+                    />
+                 ) : (
+                    <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold">
+                      {currentUser.fullName.charAt(0)}
+                    </div>
+                 )}
+                 <div className="hidden lg:block text-left">
+                   <p className="text-sm font-medium text-gray-700 leading-none">{currentUser.fullName}</p>
+                   <p className="text-xs text-gray-400 mt-1 uppercase">{currentUser.role}</p>
+                 </div>
+               </div>
+             ) : (
+                <div className="w-24 h-8 bg-gray-200 rounded animate-pulse"></div>
+             )}
           </div>
         </header>
 
@@ -150,7 +201,7 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
           <div className="max-w-7xl mx-auto space-y-8 pb-10">
 
-             {/* Mobile Search - Visible only on small screens */}
+             {/* Mobile Search */}
              <div className="md:hidden mb-6">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -192,7 +243,7 @@ const App: React.FC = () => {
                               key={app.id} 
                               app={app} 
                               isFavorite={true} 
-                              onToggleFavorite={toggleFavorite}
+                              onToggleFavorite={handleToggleFavorite}
                               variant="compact"
                             />
                           ))}
@@ -213,7 +264,6 @@ const App: React.FC = () => {
                        <section key={group.category.id} className="animate-in fade-in slide-in-from-bottom-4 duration-700" style={{animationDelay: `${idx * 100}ms`}}>
                           <div className="flex items-center gap-3 mb-4">
                              <div className="bg-primary/10 p-2 rounded-lg text-primary">
-                                {/* Use generic icon if dynamic rendering is tricky without context, but we handled it in Sidebar */}
                                 <Settings size={20} /> 
                              </div>
                              <div>
@@ -227,7 +277,7 @@ const App: React.FC = () => {
                                 key={app.id} 
                                 app={app} 
                                 isFavorite={favorites.includes(app.id)} 
-                                onToggleFavorite={toggleFavorite}
+                                onToggleFavorite={handleToggleFavorite}
                               />
                             ))}
                           </div>
@@ -248,7 +298,7 @@ const App: React.FC = () => {
                                   key={app.id} 
                                   app={app} 
                                   isFavorite={favorites.includes(app.id)} 
-                                  onToggleFavorite={toggleFavorite}
+                                  onToggleFavorite={handleToggleFavorite}
                                 />
                               ))}
                            </div>
@@ -276,9 +326,9 @@ const App: React.FC = () => {
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
-        apps={APPS}
+        apps={apps}
         favorites={favorites}
-        onToggleFavorite={toggleFavorite}
+        onToggleFavorite={handleToggleFavorite}
       />
     </div>
   );
